@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { Company, CreateCompanyBody } from '@skan-d/shared';
-import { Plus, Building2, Users } from 'lucide-react';
+import { Plus, Building2 } from 'lucide-react';
 
 export default function AdminPage() {
   const qc = useQueryClient();
