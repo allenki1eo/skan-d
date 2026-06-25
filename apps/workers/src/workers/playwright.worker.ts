@@ -1,16 +1,9 @@
-/**
- * Playwright Automation Worker
- * Maintains a persistent Chromium browser — no cold-start per URL.
- * Resources (images/fonts/media) are blocked for speed.
- * Progress is pushed to Redis pub/sub → Socket.IO → client.
- */
 import 'dotenv/config';
 import { Worker, Job } from 'bullmq';
 import { chromium, Browser, BrowserContext } from 'playwright';
 import { AutomationJobData } from '../queue';
-import { getRedis } from '../lib/redis';
-const redis = getRedis();
-import { db } from '../db/pool';
+import { getRedis } from '../redis';
+import { db } from '../db';
 
 const CONCURRENCY = parseInt(process.env.PW_CONCURRENCY || '20', 10);
 const BLOCKED_RESOURCES = new Set(['image', 'font', 'media', 'stylesheet']);
@@ -18,7 +11,6 @@ const NAVIGATION_TIMEOUT = 10_000;
 const CLICK_TIMEOUT = 8_000;
 
 let browser: Browser;
-// One context per company session within this worker (shared cookies if needed)
 const contexts = new Map<string, BrowserContext>();
 
 async function getBrowser(): Promise<Browser> {
@@ -52,7 +44,7 @@ async function getContext(companyId: string): Promise<BrowserContext> {
   return contexts.get(companyId)!;
 }
 
-async function processUrl(data: AutomationJobData): Promise<{ status: string; durationMs: number }> {
+async function processUrl(data: AutomationJobData) {
   const { url, confirmSelector, waitForNavigation, blockResources, companyId } = data;
   const ctx = await getContext(companyId);
   const page = await ctx.newPage();
@@ -61,27 +53,20 @@ async function processUrl(data: AutomationJobData): Promise<{ status: string; du
   try {
     if (blockResources) {
       await page.route('**/*', (route) => {
-        if (BLOCKED_RESOURCES.has(route.request().resourceType())) {
-          route.abort();
-        } else {
-          route.continue();
-        }
+        BLOCKED_RESOURCES.has(route.request().resourceType())
+          ? route.abort()
+          : route.continue();
       });
     }
 
-    await page.goto(url, {
-      waitUntil: 'domcontentloaded',
-      timeout: NAVIGATION_TIMEOUT,
-    });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
 
     const btn = page.locator(confirmSelector).first();
     await btn.waitFor({ state: 'visible', timeout: CLICK_TIMEOUT });
     await btn.click({ timeout: CLICK_TIMEOUT });
 
     if (waitForNavigation) {
-      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {
-        // non-fatal — page may not navigate after click
-      });
+      await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
     }
 
     return { status: 'success', durationMs: Date.now() - start };
@@ -99,6 +84,8 @@ async function processUrl(data: AutomationJobData): Promise<{ status: string; du
   }
 }
 
+const redis = getRedis();
+
 const worker = new Worker<AutomationJobData>(
   'automation',
   async (job: Job<AutomationJobData>) => {
@@ -110,30 +97,24 @@ const worker = new Worker<AutomationJobData>(
     } catch (err: any) {
       outcome = { status: 'error', durationMs: 0 };
       await db.query(
-        `UPDATE url_results SET status='error', error_msg=$1, duration_ms=$2 WHERE id=$3`,
-        [err.message?.slice(0, 500), 0, urlResultId]
+        `UPDATE url_results SET status='error', error_msg=$1, duration_ms=0 WHERE id=$2`,
+        [err.message?.slice(0, 500), urlResultId]
       );
     }
 
-    // Update url_result
     await db.query(
       `UPDATE url_results SET status=$1, duration_ms=$2 WHERE id=$3`,
       [outcome.status, outcome.durationMs, urlResultId]
     );
 
-    // Increment job counters atomically
     const col = outcome.status === 'success' ? 'success' : 'failed';
     const { rows: [updated] } = await db.query(
-      `UPDATE jobs
-       SET ${col} = ${col} + 1
-       WHERE id = $1
-       RETURNING success, failed, skipped, total, status`,
+      `UPDATE jobs SET ${col} = ${col} + 1 WHERE id=$1
+       RETURNING success, failed, skipped, total, status, company_id`,
       [jobId]
     );
 
     const done = updated.success + updated.failed + updated.skipped;
-
-    // Mark job complete when all URLs processed
     if (done >= updated.total) {
       await db.query(
         `UPDATE jobs SET status='completed', completed_at=NOW() WHERE id=$1 AND status='running'`,
@@ -142,11 +123,11 @@ const worker = new Worker<AutomationJobData>(
       updated.status = 'completed';
     }
 
-    // Publish progress to Redis so Socket.IO can fan out to connected clients
     await redis.publish(
       `job:${jobId}`,
       JSON.stringify({
         jobId,
+        companyId: updated.company_id,
         total: updated.total,
         success: updated.success,
         failed: updated.failed,
@@ -161,7 +142,7 @@ const worker = new Worker<AutomationJobData>(
     );
   },
   {
-    connection: redis,
+    connection: getRedis(),
     concurrency: CONCURRENCY,
   }
 );
@@ -170,7 +151,6 @@ worker.on('failed', (job, err) => {
   console.error(`[playwright] job ${job?.id} error:`, err.message);
 });
 
-// Graceful shutdown
 async function shutdown() {
   await worker.close();
   for (const ctx of contexts.values()) await ctx.close();
@@ -180,4 +160,4 @@ async function shutdown() {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-console.log(`[playwright-worker] Running with concurrency=${CONCURRENCY}`);
+console.log(`[playwright-worker] concurrency=${CONCURRENCY}`);

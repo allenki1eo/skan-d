@@ -83,8 +83,8 @@ services:
 
   worker-decode:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile.worker-decode
+      context: ./apps/workers
+      dockerfile: Dockerfile.decode
     restart: unless-stopped
     depends_on:
       postgres:
@@ -107,8 +107,8 @@ services:
 
   worker-playwright:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile.worker-playwright
+      context: ./apps/workers
+      dockerfile: Dockerfile.playwright
     restart: unless-stopped
     shm_size: '1gb'
     depends_on:

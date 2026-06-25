@@ -6,10 +6,6 @@ export interface QrResult {
   pageNum?: number;
 }
 
-/**
- * Decode all QR codes found in a PNG buffer.
- * Tries the full image first, then subdivides into a grid for dense PDFs.
- */
 export async function decodeQrCodes(imageBuffer: Buffer, pageNum?: number): Promise<QrResult[]> {
   const { data, info } = await sharp(imageBuffer)
     .ensureAlpha()

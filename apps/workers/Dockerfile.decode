@@ -1,6 +1,5 @@
 FROM node:20-alpine
 WORKDIR /app
-# canvas deps for pdfjs-dist in Node
 RUN apk add --no-cache python3 make g++ cairo-dev pango-dev libjpeg-turbo-dev giflib-dev librsvg-dev
 COPY package.json ./
 RUN npm install
