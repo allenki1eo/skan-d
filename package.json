@@ -1,7 +1,7 @@
 {
   "name": "skan-d",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": ["apps/api", "apps/web", "packages/*"],
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
