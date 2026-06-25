@@ -7,7 +7,9 @@
 import 'dotenv/config';
 import { Worker, Job } from 'bullmq';
 import { chromium, Browser, BrowserContext } from 'playwright';
-import { redis, AutomationJobData } from '../queue';
+import { AutomationJobData } from '../queue';
+import { getRedis } from '../lib/redis';
+const redis = getRedis();
 import { db } from '../db/pool';
 
 const CONCURRENCY = parseInt(process.env.PW_CONCURRENCY || '20', 10);

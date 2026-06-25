@@ -1,14 +1,8 @@
-import { Queue, Worker, QueueEvents } from 'bullmq';
-import IORedis from 'ioredis';
+import { Queue } from 'bullmq';
+import { getRedis } from '../lib/redis';
 
-export const redis = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', {
-  maxRetriesPerRequest: null,
-});
-
-export const decodeQueue = new Queue('qr-decode', { connection: redis });
-export const automationQueue = new Queue('automation', { connection: redis });
-export const decodeQueueEvents = new QueueEvents('qr-decode', { connection: redis });
-export const automationQueueEvents = new QueueEvents('automation', { connection: redis });
+export const decodeQueue = new Queue('qr-decode', { connection: getRedis() });
+export const automationQueue = new Queue('automation', { connection: getRedis() });
 
 export interface DecodeJobData {
   jobId: string;

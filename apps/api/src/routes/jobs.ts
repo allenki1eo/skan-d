@@ -1,22 +1,18 @@
 import { FastifyInstance } from 'fastify';
-import { pipeline } from 'stream/promises';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db/pool';
 import { decodeQueue } from '../queue';
 import { uploadStream } from '../lib/s3';
 import { JwtPayload } from '@skan-d/shared';
+import { getRedis } from '../lib/redis';
 
 export default async function jobsRoutes(app: FastifyInstance) {
   const guard = { preHandler: app.authenticate };
 
   // POST /jobs — multipart: PDF file + job config fields
-  app.post('/', {
-    ...guard,
-    config: { rawBody: true },
-  }, async (req, reply) => {
+  app.post('/', guard, async (req, reply) => {
     const user = req.user as JwtPayload;
 
-    // Check company quota
     const { rows: [company] } = await db.query(
       `SELECT quota_batch_size, quota_concurrency, active FROM companies WHERE id=$1`,
       [user.companyId]
@@ -43,14 +39,12 @@ export default async function jobsRoutes(app: FastifyInstance) {
 
     if (!pdfKey) return reply.code(400).send({ error: 'PDF file required' });
 
-    // Create job record
     await db.query(
       `INSERT INTO jobs (id, company_id, user_id, confirm_selector, wait_for_navigation, block_resources, pdf_key, status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')`,
       [jobId, user.companyId, user.sub, confirmSelector, waitForNavigation, blockResources, pdfKey]
     );
 
-    // Enqueue decode job
     await decodeQueue.add('decode-pdf', {
       jobId,
       companyId: user.companyId,
@@ -60,7 +54,7 @@ export default async function jobsRoutes(app: FastifyInstance) {
     reply.code(202).send({ jobId, status: 'pending' });
   });
 
-  // GET /jobs — list jobs for the caller's company
+  // GET /jobs
   app.get('/', guard, async (req, reply) => {
     const user = req.user as JwtPayload;
     const { rows } = await db.query(
@@ -83,34 +77,93 @@ export default async function jobsRoutes(app: FastifyInstance) {
     reply.send(rows[0]);
   });
 
-  // GET /jobs/:id/results — paginated url_results
+  /**
+   * GET /jobs/:id/stream — Server-Sent Events for live job progress.
+   * Subscribes to Redis pub/sub channel and streams updates to the client.
+   * Works on Vercel (streaming response) and local dev.
+   */
+  // SSE endpoint — auth via query param token (EventSource can't set headers)
+  app.get<{ Params: { id: string }; Querystring: { token?: string } }>('/:id/stream', async (req, reply) => {
+    const token = req.query.token;
+    if (!token) return reply.code(401).send({ error: 'Unauthorized' });
+    let user: JwtPayload;
+    try {
+      user = (req.server as any).jwt.verify(token) as JwtPayload;
+    } catch {
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
+    // re-bind user so the rest of the handler works the same
+    (req as any).user = user;
+    const user = req.user as JwtPayload;
+
+    const { rows: [job] } = await db.query(
+      `SELECT id, company_id FROM jobs WHERE id=$1 AND company_id=$2`,
+      [req.params.id, (req as any).user.companyId]
+    );
+    if (!job) return reply.code(404).send({ error: 'Not found' });
+
+    reply.raw.setHeader('Content-Type', 'text/event-stream');
+    reply.raw.setHeader('Cache-Control', 'no-cache');
+    reply.raw.setHeader('Connection', 'keep-alive');
+    reply.raw.setHeader('X-Accel-Buffering', 'no');
+    reply.raw.flushHeaders();
+
+    const send = (data: object) => {
+      reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    // Send current state immediately
+    const { rows: [current] } = await db.query(
+      `SELECT id, status, total, success, failed, skipped FROM jobs WHERE id=$1`,
+      [req.params.id]
+    );
+    send(current);
+
+    // Subscribe to Redis updates
+    const subscriber = getRedis().duplicate();
+    await subscriber.subscribe(`job:${req.params.id}`);
+
+    subscriber.on('message', (_channel: string, message: string) => {
+      try {
+        send(JSON.parse(message));
+      } catch {
+        // ignore
+      }
+    });
+
+    const cleanup = () => {
+      subscriber.unsubscribe().then(() => subscriber.disconnect()).catch(() => {});
+    };
+
+    req.raw.on('close', cleanup);
+    req.raw.on('aborted', cleanup);
+  });
+
+  // GET /jobs/:id/results
   app.get<{ Params: { id: string }; Querystring: { page?: number; status?: string } }>(
     '/:id/results', guard, async (req, reply) => {
       const user = req.user as JwtPayload;
-      const page = req.query.page || 1;
+      const page = Number(req.query.page) || 1;
       const statusFilter = req.query.status;
       const limit = 100;
       const offset = (page - 1) * limit;
 
-      // Verify ownership
       const { rows: [job] } = await db.query(
         `SELECT id FROM jobs WHERE id=$1 AND company_id=$2`,
         [req.params.id, user.companyId]
       );
       if (!job) return reply.code(404).send({ error: 'Not found' });
 
-      const whereStatus = statusFilter ? `AND status=$3` : '';
-      const params: any[] = [req.params.id, limit, offset];
-      if (statusFilter) params.push(statusFilter);
+      const params: any[] = statusFilter
+        ? [req.params.id, limit, offset, statusFilter]
+        : [req.params.id, limit, offset];
 
+      const whereStatus = statusFilter ? `AND status=$4` : '';
       const { rows } = await db.query(
         `SELECT id, url, status, error_msg, duration_ms, created_at
          FROM url_results WHERE job_id=$1 ${whereStatus}
          ORDER BY created_at ASC LIMIT $2 OFFSET $3`,
-        // re-adjust param indices
-        statusFilter
-          ? [req.params.id, limit, offset, statusFilter]
-          : [req.params.id, limit, offset]
+        params
       );
 
       const { rows: [count] } = await db.query(

@@ -6,7 +6,9 @@
  */
 import 'dotenv/config';
 import { Worker, Job } from 'bullmq';
-import { redis, automationQueue, DecodeJobData, AutomationJobData } from '../queue';
+import { automationQueue, DecodeJobData, AutomationJobData } from '../queue';
+import { getRedis } from '../lib/redis';
+const redis = getRedis();
 import { downloadBuffer, deleteObject } from '../lib/s3';
 import { pdfToImages } from '../lib/pdf';
 import { decodeQrCodes } from '../lib/qr';
@@ -94,6 +96,7 @@ const worker = new Worker<DecodeJobData>(
   {
     connection: redis,
     concurrency: DECODE_CONCURRENCY,
+    connection: redis,
   }
 );
 

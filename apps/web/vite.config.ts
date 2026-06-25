@@ -34,8 +34,12 @@ export default defineConfig({
   ],
   server: {
     proxy: {
-      '/api': { target: 'http://localhost:3000', rewrite: (p) => p.replace(/^\/api/, '') },
-      '/socket.io': { target: 'http://localhost:3000', ws: true },
+      // In local dev, proxy /api to the Fastify server
+      '/api': {
+        target: process.env.VITE_API_URL || 'http://localhost:3000',
+        rewrite: (p) => p.replace(/^\/api/, ''),
+        changeOrigin: true,
+      },
     },
   },
 });

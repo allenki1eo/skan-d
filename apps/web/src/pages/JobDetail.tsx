@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { subscribeJob } from '../lib/socket';
+import { subscribeJob } from '../lib/sse';
 import { Job, UrlResult, JobProgressEvent, UrlStatus } from '@skan-d/shared';
 import { Download, CheckCircle, XCircle, Clock, AlertCircle } from 'lucide-react';
 
