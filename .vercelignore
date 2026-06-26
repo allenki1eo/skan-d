@@ -1,4 +1,0 @@
-apps/workers
-infra
-docker-compose*.yml
-*.prod.*

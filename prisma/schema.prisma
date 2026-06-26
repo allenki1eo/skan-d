@@ -1,0 +1,99 @@
+// BaleTrack Pro — Prisma schema
+// SaaS platform for automating TCB cotton bale dispatch acceptance.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────
+// SQLite has no native enums; we store as strings but constrain in code.
+
+// Role: SUPER_ADMIN (you, the SaaS owner), COMPANY_ADMIN (ginnery manager),
+// CLERK (dispatch operator, can also upload).
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String
+  role         String    @default("COMPANY_ADMIN") // SUPER_ADMIN | COMPANY_ADMIN | CLERK
+  companyId    String?
+  company      Company?  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  jobs         Job[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([companyId])
+}
+
+model Plan {
+  id          String    @id @default(cuid())
+  name        String    @unique // "Trial" | "Pro" | "Enterprise"
+  pageLimit   Int       // 10 | 500 | -1 (unlimited)
+  priceTsh    Int       // Tanzanian Shillings per month
+  description String
+  companies   Company[]
+  createdAt   DateTime  @default(now())
+}
+
+model Company {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  phone     String?
+  region    String?  // e.g. "Shinyanga", "Mwanza", "Geita"
+  active    Boolean  @default(true)
+  planId    String?
+  plan      Plan?    @relation(fields: [planId], references: [id])
+  users     User[]
+  jobs      Job[]
+  pagesUsed Int      @default(0) // pages processed in current billing cycle
+  cycleStart DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([planId])
+}
+
+model Job {
+  id             String    @id @default(cuid())
+  companyId      String
+  company        Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+  fileName       String
+  totalPages     Int       // total pages in the uploaded PDF
+  allowedPages   Int       // pages the plan actually allowed (<= totalPages)
+  processedPages Int       @default(0)
+  totalQRCodes   Int       @default(0)
+  accepted       Int       @default(0)
+  failed         Int       @default(0)
+  status         String    @default("PENDING") // PENDING | RUNNING | COMPLETED | FAILED | CANCELLED
+  regUrl         String    // TCB device-registration URL the user pasted
+  pacingMs       Int       @default(500) // delay between TCB requests
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  items          JobItem[]
+
+  @@index([companyId])
+  @@index([status])
+}
+
+model JobItem {
+  id         String    @id @default(cuid())
+  jobId      String
+  job        Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  pageNumber Int
+  qrUrl      String    // decoded TCB URL hidden in the QR
+  status     String    @default("PENDING") // PENDING | ACCEPTED | FAILED
+  message    String?
+  acceptedAt DateTime?
+
+  @@index([jobId])
+  @@index([status])
+}
