@@ -124,7 +124,13 @@ export default function Devices({ devices, onChange }) {
             </div>
           </div>
         ))}
-        {!devices.length && <p className="muted">No devices yet. Add one above.</p>}
+        {!devices.length && (
+          <div className="empty">
+            <span className="empty-icon">🔑</span>
+            <p>No devices yet.</p>
+            <p className="muted">Add one above to enable automatic confirmation.</p>
+          </div>
+        )}
       </div>
     </div>
   );
