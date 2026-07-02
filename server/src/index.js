@@ -4,11 +4,13 @@ import fastifyStatic from '@fastify/static';
 import fastifyCookie from '@fastify/cookie';
 import fs from 'node:fs';
 import { config } from './config.js';
-import './db.js';
+import { initDb } from './db.js';
 import deviceRoutes from './routes/devices.js';
 import jobRoutes from './routes/jobs.js';
 
 const app = Fastify({ logger: { level: 'info' }, bodyLimit: 30 * 1024 * 1024 });
+
+await initDb();
 
 await app.register(fastifyCookie);
 await app.register(multipart, { limits: { fileSize: 30 * 1024 * 1024, files: 20 } });

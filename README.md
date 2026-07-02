@@ -54,7 +54,7 @@ live over SSE.
 | Layer | Tech |
 |---|---|
 | API | Fastify (Node 20, ESM) |
-| Storage | SQLite (`better-sqlite3`) |
+| Storage | Turso / libSQL (`@libsql/client`) — hosted, or a local SQLite file |
 | Sessions | `tough-cookie` jar per device, replayed via `undici` + `http-cookie-agent` |
 | QR decode | `pdfjs-dist` + `@napi-rs/canvas` rasterise → `zxing-wasm` (multi-symbol) |
 | Frontend | React + Vite, installable PWA (`vite-plugin-pwa`), `jsqr` camera scanner |
@@ -79,7 +79,8 @@ npm run dev                 # api on :8080, web on :5173 (proxied)
 |---|---|---|
 | `PORT` | `8080` | HTTP port |
 | `TCB_BASE_URL` | `https://ccis.tcb.go.tz` | CCIS base URL |
-| `DB_PATH` | `./data/baletrack.sqlite` | SQLite file |
+| `TURSO_DATABASE_URL` | _(local file)_ | Turso libSQL URL; blank → `./data/baletrack.sqlite` |
+| `TURSO_AUTH_TOKEN` | _(none)_ | Turso auth token (remote only) |
 | `CONFIRM_CONCURRENCY` | `6` | parallel confirm workers |
 | `CONFIRM_DELAY_MS` | `150` | delay between requests per worker (be gentle) |
 | `APP_PASSWORD` | _(empty)_ | optional shared password gate |

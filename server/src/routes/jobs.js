@@ -1,12 +1,14 @@
 import { nanoid } from 'nanoid';
-import db from '../db.js';
+import { all, get, run } from '../db.js';
 import { decodeBuffer } from '../decode.js';
 import { parseBaleData } from '../tcb.js';
 import { runJob, bus, isRunning } from '../runner.js';
 
-function publicJob(job) {
+const getJob = (id) => get('SELECT * FROM jobs WHERE id = ?', [id]);
+
+async function publicJob(job) {
   if (!job) return null;
-  const bales = db.prepare('SELECT * FROM bales WHERE job_id = ? ORDER BY rowid').all(job.id);
+  const bales = await all('SELECT * FROM bales WHERE job_id = ? ORDER BY rowid', [job.id]);
   const counts = bales.reduce((acc, b) => ((acc[b.status] = (acc[b.status] || 0) + 1), acc), {});
   return {
     id: job.id,
@@ -29,10 +31,7 @@ function publicJob(job) {
   };
 }
 
-function insertBales(jobId, urls) {
-  const insert = db.prepare(
-    `INSERT OR IGNORE INTO bales (id, job_id, label, data, url) VALUES (?, ?, ?, ?, ?)`,
-  );
+async function insertBales(jobId, urls) {
   let added = 0;
   const seen = new Set();
   for (const raw of urls) {
@@ -40,29 +39,38 @@ function insertBales(jobId, urls) {
     if (parsed.kind !== 'track') continue;
     if (seen.has(parsed.data)) continue;
     seen.add(parsed.data);
-    const info = insert.run(nanoid(), jobId, null, parsed.data, parsed.url);
-    added += info.changes;
+    const res = await run('INSERT OR IGNORE INTO bales (id, job_id, label, data, url) VALUES (?, ?, ?, ?, ?)', [
+      nanoid(),
+      jobId,
+      null,
+      parsed.data,
+      parsed.url,
+    ]);
+    added += res.rowsAffected;
   }
   return added;
 }
 
 export default async function jobRoutes(app) {
   app.get('/api/jobs', async () => {
-    const jobs = db.prepare('SELECT * FROM jobs ORDER BY created_at DESC').all();
-    return jobs.map((j) => {
-      const total = db.prepare('SELECT COUNT(*) n FROM bales WHERE job_id = ?').get(j.id).n;
-      return { id: j.id, name: j.name, source: j.source, status: j.status, createdAt: j.created_at, total };
-    });
+    const jobs = await all('SELECT * FROM jobs ORDER BY created_at DESC');
+    const out = [];
+    for (const j of jobs) {
+      const row = await get('SELECT COUNT(*) n FROM bales WHERE job_id = ?', [j.id]);
+      out.push({ id: j.id, name: j.name, source: j.source, status: j.status, createdAt: j.created_at, total: row.n });
+    }
+    return out;
   });
 
   app.get('/api/jobs/:id', async (req, reply) => {
-    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(req.params.id);
+    const job = await getJob(req.params.id);
     if (!job) return reply.code(404).send({ error: 'Job not found' });
     return publicJob(job);
   });
 
   app.delete('/api/jobs/:id', async (req) => {
-    db.prepare('DELETE FROM jobs WHERE id = ?').run(req.params.id);
+    await run('DELETE FROM bales WHERE job_id = ?', [req.params.id]);
+    await run('DELETE FROM jobs WHERE id = ?', [req.params.id]);
     return { ok: true };
   });
 
@@ -91,13 +99,9 @@ export default async function jobRoutes(app) {
 
     const jobId = nanoid();
     const isPdf = allUrls.length && /pdf/i.test(name || '');
-    db.prepare('INSERT INTO jobs (id, name, source) VALUES (?, ?, ?)').run(
-      jobId,
-      name || 'Upload',
-      isPdf ? 'pdf' : 'image',
-    );
-    const added = insertBales(jobId, allUrls);
-    return { ...publicJob(db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId)), decoded: allUrls.length, added };
+    await run('INSERT INTO jobs (id, name, source) VALUES (?, ?, ?)', [jobId, name || 'Upload', isPdf ? 'pdf' : 'image']);
+    const added = await insertBales(jobId, allUrls);
+    return { ...(await publicJob(await getJob(jobId))), decoded: allUrls.length, added };
   });
 
   // Create a job from pasted URLs or scanned codes (JSON).
@@ -107,32 +111,32 @@ export default async function jobRoutes(app) {
       return reply.code(400).send({ error: 'urls array is required' });
     }
     const jobId = nanoid();
-    db.prepare('INSERT INTO jobs (id, name, source) VALUES (?, ?, ?)').run(
+    await run('INSERT INTO jobs (id, name, source) VALUES (?, ?, ?)', [
       jobId,
       name || 'Scan session',
       source === 'scan' ? 'scan' : 'paste',
-    );
-    const added = insertBales(jobId, urls);
-    return { ...publicJob(db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId)), added };
+    ]);
+    const added = await insertBales(jobId, urls);
+    return { ...(await publicJob(await getJob(jobId))), added };
   });
 
   // Append more codes to an existing job (used by the live scanner).
   app.post('/api/jobs/:id/bales', async (req, reply) => {
-    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(req.params.id);
+    const job = await getJob(req.params.id);
     if (!job) return reply.code(404).send({ error: 'Job not found' });
     const { urls } = req.body || {};
     if (!Array.isArray(urls)) return reply.code(400).send({ error: 'urls array is required' });
-    const added = insertBales(job.id, urls);
-    return { ...publicJob(job), added };
+    const added = await insertBales(job.id, urls);
+    return { ...(await publicJob(job)), added };
   });
 
   // Kick off a run. mode: 'confirm' | 'check'
   app.post('/api/jobs/:id/run', async (req, reply) => {
-    const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(req.params.id);
+    const job = await getJob(req.params.id);
     if (!job) return reply.code(404).send({ error: 'Job not found' });
     const { deviceId, mode } = req.body || {};
     if (!deviceId) return reply.code(400).send({ error: 'deviceId is required' });
-    const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceId);
+    const device = await get('SELECT * FROM devices WHERE id = ?', [deviceId]);
     if (!device) return reply.code(404).send({ error: 'Device not found' });
     if (isRunning(job.id)) return reply.code(409).send({ error: 'Job already running' });
 
