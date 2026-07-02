@@ -6,18 +6,19 @@ import Scanner from './components/Scanner.jsx';
 import Jobs from './components/Jobs.jsx';
 import JobView from './components/JobView.jsx';
 
+// Upload → auto-confirm is the primary flow; the camera scanner is a fallback.
 const TABS = [
-  { id: 'scan', label: 'Scan', icon: '📷' },
   { id: 'upload', label: 'Upload', icon: '📄' },
   { id: 'jobs', label: 'Jobs', icon: '📋' },
   { id: 'devices', label: 'Devices', icon: '🔑' },
+  { id: 'scan', label: 'Scan', icon: '📷' },
 ];
 
 export default function App() {
   const [cfg, setCfg] = useState(null);
   const [authed, setAuthed] = useState(true);
   const [password, setPassword] = useState('');
-  const [tab, setTab] = useState('scan');
+  const [tab, setTab] = useState('upload');
   const [devices, setDevices] = useState([]);
   const [deviceId, setDeviceId] = useState(null);
   const [openJob, setOpenJob] = useState(null);
