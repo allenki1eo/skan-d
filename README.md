@@ -86,7 +86,9 @@ Two things differ from self-hosting, handled automatically:
 
 Steps:
 
-1. Create a **Turso** database and copy its URL + token.
+1. Create a **Turso** database and copy its URL + token. The app creates its tables on
+   first boot, or you can provision them up front with [`db/schema.sql`](db/schema.sql):
+   `turso db shell <db> < db/schema.sql`.
 2. Import the repo into Vercel. In **Settings → Environment Variables** set:
    - `TURSO_DATABASE_URL=libsql://your-db.turso.io`
    - `TURSO_AUTH_TOKEN=your-token`
