@@ -1,8 +1,11 @@
 node_modules/
 dist/
-.env
-*.env.local
-.turbo/
-.DS_Store
 *.log
-coverage/
+.env
+.env.local
+data/
+*.sqlite
+*.sqlite-*
+.DS_Store
+/tmp/
+web/dev-dist/

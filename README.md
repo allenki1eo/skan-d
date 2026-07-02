@@ -1,90 +1,91 @@
-# Skan-D — QR Code Automation Platform
+# Bale Track Auto
 
-Upload a PDF of QR codes and automatically visit every URL, clicking the confirm button on each page — at scale, concurrently, as fast as possible.
+Automatic cotton-bale tracking for the **Tanzania Cotton Board – CCIS** (`ccis.tcb.go.tz`).
 
-## Architecture
+Instead of scanning every lot-space QR code and tapping **Confirm** one bale at a time, this service
+decodes a whole QR sheet (or scans with the phone camera) and confirms every bale automatically,
+acting as a registered scanning device.
 
+## How it works
+
+The TCB "Cotton Bale Tracking" page is an Angular app. When you open a bale QR it calls a small
+JSON API, and the **Confirm** button is just one more call. This service talks to that API directly —
+no headless browser button-clicking needed, so it's fast and reliable.
+
+| Action | Request | Notes |
+|---|---|---|
+| Read a bale's status | `POST /service/baleTracker/track/0/<data>` | `0` = read only, no side effect |
+| Confirm a bale | `POST /service/baleTracker/track/1/<data>` | `1` = confirm at this device's check point |
+| Register a device | `POST /service/baleTracker/register/<token>` | sets the device session cookie |
+
+`<data>` is the hex token embedded in each QR URL (`…/baletrack/<data>`). A real bale status looks like:
+
+```json
+{ "status": 0, "checkPoint": 1, "label": "2704C-96", "checks": [null, null] }
 ```
-PDF Upload → S3 → pdfjs-dist (rasterise) → zxing-wasm (decode QR) → BullMQ → Playwright workers → PostgreSQL
-                                                                                        ↓
-                                                                             Redis pub/sub → Socket.IO → PWA
-```
+
+`checks` is `[Ginnery, Port]`; a filled slot means already tracked there. A registered device is
+assigned a **`checkPoint`** (`1` = Ginnery, `2` = Port) — any session can *read*, but only one with a
+check point can *confirm*, which is exactly how the service tells a real device apart from a plain session.
+
+## Getting a device authorized
+
+Auto-confirm needs a registered TCB session. Two supported ways (**Devices** tab):
+
+1. **Register a link** — paste a fresh registration link
+   (`https://ccis.tcb.go.tz/baletrack/register/<token>`). The service opens it and registers itself.
+2. **Import cookies** — if your phone is already registered, open the site on it, run `document.cookie`
+   in the browser console, and paste the result. The service reuses that session.
+
+Use **Verify** on a device (with any bale QR) to confirm it's still authorized — it checks that the
+session carries a check point.
+
+## Feeding in bales
+
+- **Upload** a QR-code PDF or a photo of the sheet — every code is decoded server-side.
+- **Scan** live with the phone camera in the installed PWA (auto-confirm on scan optional).
+- **Paste** bale URLs directly.
+
+Then pick a device and hit **Confirm** (or **Check only** for a safe read-only pass). Progress streams
+live over SSE.
 
 ## Stack
 
-| Layer | Technology |
+| Layer | Tech |
 |---|---|
-| API | Fastify + Node 20 |
-| Auth | JWT (15m) + httpOnly refresh token |
-| Queue | BullMQ + Redis |
-| QR Decode | zxing-wasm (WebAssembly) |
-| PDF Rasterise | pdfjs-dist + canvas |
-| Automation | Playwright (persistent Chromium) |
-| Database | PostgreSQL 16 |
-| Storage | S3 / MinIO |
-| Frontend | React 18 + Vite + Tailwind |
-| PWA | Workbox |
-| Infra | Docker Compose → K8s |
+| API | Fastify (Node 20, ESM) |
+| Storage | SQLite (`better-sqlite3`) |
+| Sessions | `tough-cookie` jar per device, replayed via `undici` + `http-cookie-agent` |
+| QR decode | `pdfjs-dist` + `@napi-rs/canvas` rasterise → `zxing-wasm` (multi-symbol) |
+| Frontend | React + Vite, installable PWA (`vite-plugin-pwa`), `jsqr` camera scanner |
 
-## Getting Started
-
-### 1. Start infrastructure
+## Run it
 
 ```bash
-docker-compose up -d postgres redis minio minio-init
+cp .env.example .env        # optional: set APP_PASSWORD, concurrency, etc.
+npm install                 # also builds the PWA (postinstall)
+npm start                   # serves API + PWA on http://localhost:8080
 ```
 
-### 2. Set up environment
+Development (API + Vite dev server with hot reload):
 
 ```bash
-cp apps/api/.env.example apps/api/.env
+npm run dev                 # api on :8080, web on :5173 (proxied)
 ```
 
-### 3. Run migrations
+### Configuration (`.env`)
 
-```bash
-npm run db:migrate
-```
+| Var | Default | Meaning |
+|---|---|---|
+| `PORT` | `8080` | HTTP port |
+| `TCB_BASE_URL` | `https://ccis.tcb.go.tz` | CCIS base URL |
+| `DB_PATH` | `./data/baletrack.sqlite` | SQLite file |
+| `CONFIRM_CONCURRENCY` | `6` | parallel confirm workers |
+| `CONFIRM_DELAY_MS` | `150` | delay between requests per worker (be gentle) |
+| `APP_PASSWORD` | _(empty)_ | optional shared password gate |
 
-Default superadmin: `admin@skan-d.io` / `Admin1234!`
+## Safety
 
-### 4. Start API + workers
-
-```bash
-# Terminal 1 — API server
-cd apps/api && npm run dev
-
-# Terminal 2 — QR decode worker
-cd apps/api && npm run worker:decode
-
-# Terminal 3 — Playwright automation worker
-cd apps/api && npm run worker:playwright
-```
-
-### 5. Start web app
-
-```bash
-cd apps/web && npm run dev
-```
-
-Open http://localhost:5173
-
-## Running with Docker Compose (full stack)
-
-```bash
-docker-compose up --build
-```
-
-## Performance
-
-- 1,000 QR codes in a single PDF → decoded in ~20s (8 parallel decode workers)
-- 1,000 URLs automated → ~3 min at 20 concurrent Playwright sessions
-- Scale Playwright workers (`docker-compose up --scale worker-playwright=5`) for more throughput
-
-## Roles
-
-| Role | Capabilities |
-|---|---|
-| `superadmin` | Create/suspend companies, set quotas, view all jobs |
-| `company_admin` | Manage company users, view company jobs |
-| `operator` | Upload PDFs, run batch jobs, download reports |
+- **Check only** mode uses `track/0` and never changes anything — use it to validate a device or sheet.
+- Confirm mode only fires `track/1` for bales not already tracked at the device's check point.
+- Requests are throttled (`CONFIRM_CONCURRENCY` / `CONFIRM_DELAY_MS`) to stay gentle on the CCIS server.

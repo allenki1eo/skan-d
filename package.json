@@ -1,20 +1,23 @@
 {
-  "name": "skan-d",
+  "name": "baletrack-auto",
+  "version": "1.0.0",
   "private": true,
-  "workspaces": ["apps/api", "apps/web", "packages/*"],
+  "description": "Automatic cotton bale tracking for TCB CCIS — decode QR sheets and auto-confirm bales at the ginnery.",
+  "type": "module",
+  "workspaces": [
+    "server",
+    "web"
+  ],
   "scripts": {
-    "dev": "turbo run dev",
-    "build": "turbo run build",
-    "lint": "turbo run lint",
-    "db:migrate": "turbo run db:migrate --filter=@skan-d/api",
-    "docker:up": "docker-compose up -d",
-    "docker:down": "docker-compose down"
-  },
-  "devDependencies": {
-    "turbo": "^2.1.2",
-    "typescript": "^5.5.4"
+    "dev": "concurrently -k -n api,web -c blue,green \"npm run dev -w server\" \"npm run dev -w web\"",
+    "build": "npm run build -w web",
+    "start": "npm run start -w server",
+    "postinstall": "npm run build -w web || true"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
   }
 }
