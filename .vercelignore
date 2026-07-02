@@ -1,0 +1,6 @@
+data/
+*.sqlite
+*.sqlite-*
+web/dev-dist/
+.env
+.env.local

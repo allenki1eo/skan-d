@@ -77,9 +77,9 @@ export default function Scanner({ device, onOpenJob }) {
       }
       if (auto && device) {
         updateStatus(text, 'confirming');
-        await api.runJob(jobRef.current, device.id, 'confirm');
-        // best-effort: reflect result shortly after
-        setTimeout(() => refreshLast(text), 1200);
+        const data = text.split('/').pop();
+        const r = await api.confirmBale({ deviceId: device.id, data, mode: 'confirm', jobId: jobRef.current });
+        updateStatus(text, r.status);
       }
     } catch (err) {
       updateStatus(text, 'error');
@@ -88,17 +88,6 @@ export default function Scanner({ device, onOpenJob }) {
 
   function updateStatus(url, status) {
     setScanned((s) => s.map((e) => (e.url === url ? { ...e, status } : e)));
-  }
-
-  async function refreshLast(url) {
-    if (!jobRef.current) return;
-    try {
-      const job = await api.getJob(jobRef.current);
-      const b = job.bales.find((x) => x.url === url);
-      if (b) updateStatus(url, b.status);
-    } catch {
-      /* ignore */
-    }
   }
 
   return (

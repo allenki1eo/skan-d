@@ -3,6 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 
+// On serverless (Vercel) the filesystem is read-only, so a local SQLite file can't
+// work — a hosted Turso database is required. Fail early with a clear message.
+if (process.env.VERCEL && config.dbUrl.startsWith('file:')) {
+  throw new Error(
+    'Running on Vercel without a Turso database. Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN ' +
+      'in the project environment variables (Vercel → Settings → Environment Variables).',
+  );
+}
+
 // Ensure the directory exists for local file-backed databases.
 if (config.dbUrl.startsWith('file:')) {
   const filePath = config.dbUrl.slice('file:'.length);

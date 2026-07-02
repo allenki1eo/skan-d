@@ -1,7 +1,7 @@
 import { nanoid } from 'nanoid';
 import { all, get, run } from '../db.js';
-import { decodeBuffer } from '../decode.js';
-import { parseBaleData } from '../tcb.js';
+import { parseBaleData, jarFromSerialized } from '../tcb.js';
+import { trackBale } from '../track.js';
 import { runJob, bus, isRunning } from '../runner.js';
 
 const getJob = (id) => get('SELECT * FROM jobs WHERE id = ?', [id]);
@@ -31,7 +31,7 @@ async function publicJob(job) {
   };
 }
 
-async function insertBales(jobId, urls) {
+export async function insertBales(jobId, urls) {
   let added = 0;
   const seen = new Set();
   for (const raw of urls) {
@@ -74,48 +74,15 @@ export default async function jobRoutes(app) {
     return { ok: true };
   });
 
-  // Create a job from an uploaded PDF or image (multipart), decoding QR codes.
-  app.post('/api/jobs/upload', async (req, reply) => {
-    const parts = req.parts();
-    let name = null;
-    const allUrls = [];
-    let sawFile = false;
-    for await (const part of parts) {
-      if (part.type === 'file') {
-        sawFile = true;
-        const buffer = await part.toBuffer();
-        try {
-          const urls = await decodeBuffer(buffer, part.mimetype, part.filename);
-          allUrls.push(...urls);
-        } catch (err) {
-          return reply.code(422).send({ error: `Failed to decode ${part.filename}: ${err.message}` });
-        }
-        if (!name) name = part.filename;
-      } else if (part.fieldname === 'name') {
-        name = part.value;
-      }
-    }
-    if (!sawFile) return reply.code(400).send({ error: 'No file uploaded' });
-
-    const jobId = nanoid();
-    const isPdf = allUrls.length && /pdf/i.test(name || '');
-    await run('INSERT INTO jobs (id, name, source) VALUES (?, ?, ?)', [jobId, name || 'Upload', isPdf ? 'pdf' : 'image']);
-    const added = await insertBales(jobId, allUrls);
-    return { ...(await publicJob(await getJob(jobId))), decoded: allUrls.length, added };
-  });
-
-  // Create a job from pasted URLs or scanned codes (JSON).
+  // Create a job from pasted URLs, scanned codes, or client-side decoded PDFs/images (JSON).
   app.post('/api/jobs', async (req, reply) => {
     const { name, urls, source } = req.body || {};
     if (!Array.isArray(urls) || urls.length === 0) {
       return reply.code(400).send({ error: 'urls array is required' });
     }
     const jobId = nanoid();
-    await run('INSERT INTO jobs (id, name, source) VALUES (?, ?, ?)', [
-      jobId,
-      name || 'Scan session',
-      source === 'scan' ? 'scan' : 'paste',
-    ]);
+    const src = ['scan', 'pdf', 'image', 'paste'].includes(source) ? source : 'paste';
+    await run('INSERT INTO jobs (id, name, source) VALUES (?, ?, ?)', [jobId, name || 'Job', src]);
     const added = await insertBales(jobId, urls);
     return { ...(await publicJob(await getJob(jobId))), added };
   });
@@ -130,7 +97,36 @@ export default async function jobRoutes(app) {
     return { ...(await publicJob(job)), added };
   });
 
-  // Kick off a run. mode: 'confirm' | 'check'
+  /**
+   * Stateless single-bale track/confirm — the serverless-friendly path.
+   * The PWA drives the loop over bales with its own concurrency and progress.
+   * Body: { deviceId, data, mode: 'confirm'|'check', jobId?, baleId? }
+   */
+  app.post('/api/confirm', async (req, reply) => {
+    const { deviceId, data, mode, jobId, baleId } = req.body || {};
+    if (!deviceId || !data) return reply.code(400).send({ error: 'deviceId and data are required' });
+    const device = await get('SELECT * FROM devices WHERE id = ?', [deviceId]);
+    if (!device) return reply.code(404).send({ error: 'Device not found' });
+
+    const jar = jarFromSerialized(device.cookies);
+    const o = await trackBale({ jar, data, mode: mode === 'check' ? 'check' : 'confirm' });
+
+    // Persist against the bale row if this belongs to a stored job.
+    if (jobId || baleId) {
+      const bale = baleId
+        ? await get('SELECT * FROM bales WHERE id = ?', [baleId])
+        : await get('SELECT * FROM bales WHERE job_id = ? AND data = ?', [jobId, data]);
+      if (bale) {
+        await run(
+          "UPDATE bales SET status=?, tracked=?, result=?, error=?, label=COALESCE(?, label), updated_at=datetime('now') WHERE id=?",
+          [o.outcome, o.tracked, o.result != null ? JSON.stringify(o.result) : null, o.message, o.label, bale.id],
+        );
+      }
+    }
+    return { status: o.outcome, label: o.label, checkPoint: o.checkPoint, tracked: !!o.tracked, message: o.message };
+  });
+
+  // Background run with live SSE progress (self-hosted / persistent-process mode).
   app.post('/api/jobs/:id/run', async (req, reply) => {
     const job = await getJob(req.params.id);
     if (!job) return reply.code(404).send({ error: 'Job not found' });
@@ -146,7 +142,7 @@ export default async function jobRoutes(app) {
     return { ok: true, started: true, mode: mode === 'check' ? 'check' : 'confirm' };
   });
 
-  // Server-Sent Events stream of run progress.
+  // Server-Sent Events stream of run progress (self-hosted mode).
   app.get('/api/jobs/:id/events', async (req, reply) => {
     const jobId = req.params.id;
     reply.raw.writeHead(200, {

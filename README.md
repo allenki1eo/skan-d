@@ -73,6 +73,33 @@ Development (API + Vite dev server with hot reload):
 npm run dev                 # api on :8080, web on :5173 (proxied)
 ```
 
+## Deploy to Vercel
+
+The app runs on Vercel as a static PWA + a single serverless function, backed by Turso.
+Two things differ from self-hosting, handled automatically:
+
+- **QR decoding happens in the browser** (pdf.js + zxing-wasm), so the function needs no native
+  canvas — PDFs/images are decoded client-side and only the bale URLs are sent to the API.
+- **Confirming is client-driven**: the PWA calls the stateless `POST /api/confirm` endpoint per
+  bale (with its own concurrency + progress), instead of the background worker + SSE used when
+  self-hosting. No long-lived process required.
+
+Steps:
+
+1. Create a **Turso** database and copy its URL + token.
+2. Import the repo into Vercel. In **Settings → Environment Variables** set:
+   - `TURSO_DATABASE_URL=libsql://your-db.turso.io`
+   - `TURSO_AUTH_TOKEN=your-token`
+   - *(optional)* `APP_PASSWORD=…`
+3. Deploy. `vercel.json` builds the PWA (`web/dist`) and routes `/api/*` to `api/index.js`.
+
+> Without `TURSO_DATABASE_URL` the function fails fast with a clear message, because Vercel's
+> filesystem is read-only and a local SQLite file can't be used there.
+
+The background-worker + SSE run mode (`/api/jobs/:id/run`, `/api/jobs/:id/events`) and server-side
+PDF decode (`/api/jobs/upload`) only exist when self-hosting the persistent `npm start` server; they
+are intentionally absent from the serverless function.
+
 ### Configuration (`.env`)
 
 | Var | Default | Meaning |

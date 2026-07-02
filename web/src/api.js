@@ -32,15 +32,10 @@ export const api = {
   listJobs: () => req('/api/jobs'),
   getJob: (id) => req(`/api/jobs/${id}`),
   deleteJob: (id) => req(`/api/jobs/${id}`, { method: 'DELETE' }),
-  uploadJob: (files, name) => {
-    const fd = new FormData();
-    if (name) fd.append('name', name);
-    for (const f of files) fd.append('file', f);
-    return req('/api/jobs/upload', { method: 'POST', body: fd });
-  },
   createJob: (urls, name, source) =>
     req('/api/jobs', { method: 'POST', body: JSON.stringify({ urls, name, source }) }),
   addBales: (id, urls) => req(`/api/jobs/${id}/bales`, { method: 'POST', body: JSON.stringify({ urls }) }),
-  runJob: (id, deviceId, mode) =>
-    req(`/api/jobs/${id}/run`, { method: 'POST', body: JSON.stringify({ deviceId, mode }) }),
+  // Stateless single-bale confirm/check — used by the client-driven run loop.
+  confirmBale: ({ deviceId, data, mode, jobId, baleId }) =>
+    req('/api/confirm', { method: 'POST', body: JSON.stringify({ deviceId, data, mode, jobId, baleId }) }),
 };

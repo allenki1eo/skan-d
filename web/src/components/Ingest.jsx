@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { api } from '../api.js';
+import { decodeFiles } from '../decode.js';
 
 export default function Ingest({ onOpenJob }) {
   const [busy, setBusy] = useState(false);
@@ -11,8 +12,16 @@ export default function Ingest({ onOpenJob }) {
     setBusy(true);
     setMsg(null);
     try {
-      const job = await api.uploadJob(files);
-      setMsg({ ok: true, text: `Decoded ${job.decoded} QR code(s), added ${job.added} bale(s).` });
+      // Decode in the browser (works on serverless), then create the job from URLs.
+      const urls = await decodeFiles(files);
+      if (!urls.length) {
+        setMsg({ ok: false, text: 'No QR codes found in that file.' });
+        return;
+      }
+      const name = files.length === 1 ? files[0].name : `${files.length} files`;
+      const source = /\.pdf$/i.test(files[0].name) ? 'pdf' : 'image';
+      const job = await api.createJob(urls, name, source);
+      setMsg({ ok: true, text: `Decoded ${urls.length} QR code(s), added ${job.added} bale(s).` });
       onOpenJob(job);
     } catch (err) {
       setMsg({ ok: false, text: err.message });
