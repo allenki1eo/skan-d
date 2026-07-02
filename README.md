@@ -63,7 +63,8 @@ live over SSE.
 
 ```bash
 cp .env.example .env        # optional: set APP_PASSWORD, concurrency, etc.
-npm install                 # also builds the PWA (postinstall)
+npm install                 # installs API + PWA deps
+npm run build               # builds the PWA into web/dist
 npm start                   # serves API + PWA on http://localhost:8080
 ```
 
