@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import db from '../db.js';
+import { all, get, run } from '../db.js';
 import {
   register,
   serializeJar,
@@ -25,9 +25,11 @@ function publicDevice(d) {
   };
 }
 
+const getDevice = (id) => get('SELECT * FROM devices WHERE id = ?', [id]);
+
 export default async function deviceRoutes(app) {
   app.get('/api/devices', async () => {
-    const rows = db.prepare('SELECT * FROM devices ORDER BY created_at DESC').all();
+    const rows = await all('SELECT * FROM devices ORDER BY created_at DESC');
     return rows.map(publicDevice);
   });
 
@@ -51,12 +53,13 @@ export default async function deviceRoutes(app) {
     const id = nanoid();
     const checkPoint = json?.checkPoint ?? null;
     const user = json?.user ?? null;
-    db.prepare(
+    await run(
       `INSERT INTO devices (id, label, cookies, status, check_point, user, last_ok_at)
        VALUES (?, ?, ?, 'registered', ?, ?, datetime('now'))`,
-    ).run(id, label || user || 'Registered device', serializeJar(jar), checkPoint, user);
+      [id, label || user || 'Registered device', serializeJar(jar), checkPoint, user],
+    );
 
-    return publicDevice(db.prepare('SELECT * FROM devices WHERE id = ?').get(id));
+    return publicDevice(await getDevice(id));
   });
 
   // Import cookies from an already-registered phone/browser.
@@ -66,18 +69,20 @@ export default async function deviceRoutes(app) {
 
     const jar = jarFromCookieString(cookies);
     const id = nanoid();
-    db.prepare(
-      `INSERT INTO devices (id, label, cookies, status) VALUES (?, ?, ?, 'unknown')`,
-    ).run(id, label || 'Imported device', serializeJar(jar));
+    await run(`INSERT INTO devices (id, label, cookies, status) VALUES (?, ?, ?, 'unknown')`, [
+      id,
+      label || 'Imported device',
+      serializeJar(jar),
+    ]);
 
-    return publicDevice(db.prepare('SELECT * FROM devices WHERE id = ?').get(id));
+    return publicDevice(await getDevice(id));
   });
 
   // Verify a device is still authorized by reading one bale token (read-only, no side effect).
   app.post('/api/devices/:id/verify', async (req, reply) => {
     const { id } = req.params;
     const { sample } = req.body || {};
-    const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(id);
+    const device = await getDevice(id);
     if (!device) return reply.code(404).send({ error: 'Device not found' });
     if (!sample) return reply.code(400).send({ error: 'A sample bale QR/URL is required to verify' });
 
@@ -91,24 +96,24 @@ export default async function deviceRoutes(app) {
     // Any session can read, but only a registered one carries a check point.
     const authorized = res.ok && info.valid && info.checkPoint > 0;
 
-    db.prepare('UPDATE devices SET status = ?, check_point = COALESCE(?, check_point), last_ok_at = ? WHERE id = ?').run(
+    await run('UPDATE devices SET status = ?, check_point = COALESCE(?, check_point), last_ok_at = ? WHERE id = ?', [
       authorized ? 'registered' : 'invalid',
       info.checkPoint,
       authorized ? new Date().toISOString() : device.last_ok_at,
       id,
-    );
+    ]);
 
     return {
       authorized,
       httpStatus: res.status,
       checkPoint: info.checkPoint,
       alreadyDone: info.alreadyDone,
-      device: publicDevice(db.prepare('SELECT * FROM devices WHERE id = ?').get(id)),
+      device: publicDevice(await getDevice(id)),
     };
   });
 
   app.delete('/api/devices/:id', async (req) => {
-    db.prepare('DELETE FROM devices WHERE id = ?').run(req.params.id);
+    await run('DELETE FROM devices WHERE id = ?', [req.params.id]);
     return { ok: true };
   });
 }
