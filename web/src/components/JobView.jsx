@@ -1,12 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 
+const CONCURRENCY = 6;
+
 export default function JobView({ jobId, devices, deviceId, setDeviceId, onBack }) {
   const [job, setJob] = useState(null);
-  const [progress, setProgress] = useState(null);
-  const [running, setRunning] = useState(false);
   const [mode, setMode] = useState('confirm');
-  const esRef = useRef(null);
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState(null);
+  const cancelRef = useRef(false);
 
   async function refresh() {
     try {
@@ -15,46 +17,53 @@ export default function JobView({ jobId, devices, deviceId, setDeviceId, onBack 
       /* ignore */
     }
   }
-
   useEffect(() => {
     refresh();
-    const es = new EventSource(`/api/jobs/${jobId}/events`);
-    esRef.current = es;
-    es.onmessage = (ev) => {
-      const p = JSON.parse(ev.data);
-      if (p.type === 'start') {
-        setRunning(true);
-        setProgress({ done: 0, total: p.total, confirmed: 0, already: 0, errors: 0 });
-      } else if (p.type === 'progress') {
-        setProgress(p);
-      } else if (p.type === 'bale') {
-        setJob((j) =>
-          j ? { ...j, bales: j.bales.map((b) => (b.id === p.id ? { ...b, status: p.status } : b)) } : j,
-        );
-      } else if (p.type === 'done') {
-        setProgress(p);
-        setRunning(false);
-        refresh();
-      } else if (p.type === 'error') {
-        setRunning(false);
-      }
+    return () => {
+      cancelRef.current = true;
     };
-    return () => es.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId]);
 
+  function setBaleStatus(id, status, message) {
+    setJob((j) => (j ? { ...j, bales: j.bales.map((b) => (b.id === id ? { ...b, status, error: message } : b)) } : j));
+  }
+
   async function run() {
     if (!deviceId) {
-      alert('Select a device first (Devices tab).');
+      alert('Select a device first.');
       return;
     }
+    const targets = job.bales.filter((b) => ['pending', 'error', 'checked'].includes(b.status));
+    if (!targets.length) return;
+
+    cancelRef.current = false;
     setRunning(true);
-    try {
-      await api.runJob(jobId, deviceId, mode);
-    } catch (err) {
-      alert(err.message);
-      setRunning(false);
+    const counters = { done: 0, total: targets.length, confirmed: 0, already: 0, errors: 0 };
+    setProgress({ ...counters });
+
+    let index = 0;
+    async function worker() {
+      while (index < targets.length && !cancelRef.current) {
+        const bale = targets[index++];
+        try {
+          const r = await api.confirmBale({ deviceId, data: bale.data, mode, jobId, baleId: bale.id });
+          setBaleStatus(bale.id, r.status, r.message);
+          if (r.status === 'confirmed') counters.confirmed++;
+          else if (r.status === 'already') counters.already++;
+          else if (r.status === 'error') counters.errors++;
+        } catch (err) {
+          setBaleStatus(bale.id, 'error', err.message);
+          counters.errors++;
+        }
+        counters.done++;
+        setProgress({ ...counters });
+      }
     }
+
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    setRunning(false);
+    refresh();
   }
 
   if (!job) return <div className="page">Loading…</div>;
@@ -88,19 +97,27 @@ export default function JobView({ jobId, devices, deviceId, setDeviceId, onBack 
             </button>
           </div>
         </div>
-        <button className="big" disabled={running} onClick={run}>
-          {running ? 'Running…' : mode === 'confirm' ? `Confirm ${job.total} bales` : `Check ${job.total} bales`}
-        </button>
+        {running ? (
+          <button className="big" onClick={() => (cancelRef.current = true)}>
+            Stop
+          </button>
+        ) : (
+          <button className="big" onClick={run}>
+            {mode === 'confirm' ? `Confirm ${job.total} bales` : `Check ${job.total} bales`}
+          </button>
+        )}
         {progress && (
           <>
             <div className="progress">
               <div className="bar" style={{ width: pct + '%' }} />
             </div>
             <div className="stat-row">
-              <span>{progress.done}/{progress.total}</span>
-              <span className="green">✓ {progress.confirmed || 0}</span>
-              <span className="blue">• {progress.already || 0} already</span>
-              <span className="red">✕ {progress.errors || 0}</span>
+              <span>
+                {progress.done}/{progress.total}
+              </span>
+              <span className="green">✓ {progress.confirmed}</span>
+              <span className="blue">• {progress.already} already</span>
+              <span className="red">✕ {progress.errors}</span>
             </div>
           </>
         )}

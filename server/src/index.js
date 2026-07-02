@@ -1,46 +1,13 @@
-import Fastify from 'fastify';
-import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
-import fastifyCookie from '@fastify/cookie';
 import fs from 'node:fs';
 import { config } from './config.js';
-import { initDb } from './db.js';
-import deviceRoutes from './routes/devices.js';
-import jobRoutes from './routes/jobs.js';
+import { buildApp } from './app.js';
+import uploadRoutes from './routes/upload.js';
 
-const app = Fastify({ logger: { level: 'info' }, bodyLimit: 30 * 1024 * 1024 });
+// Persistent-process server: full app + native PDF/image decode + serves the built PWA.
+const app = await buildApp({ withDecode: true });
+await app.register(uploadRoutes);
 
-await initDb();
-
-await app.register(fastifyCookie);
-await app.register(multipart, { limits: { fileSize: 30 * 1024 * 1024, files: 20 } });
-
-// Optional shared-password gate.
-if (config.appPassword) {
-  app.addHook('onRequest', async (req, reply) => {
-    if (req.url.startsWith('/api/login') || !req.url.startsWith('/api')) return;
-    const token = req.cookies?.bt_auth;
-    if (token !== config.appPassword) return reply.code(401).send({ error: 'unauthorized' });
-  });
-  app.post('/api/login', async (req, reply) => {
-    const { password } = req.body || {};
-    if (password !== config.appPassword) return reply.code(401).send({ error: 'bad password' });
-    reply.setCookie('bt_auth', config.appPassword, { path: '/', httpOnly: true, sameSite: 'lax' });
-    return { ok: true };
-  });
-}
-
-app.get('/api/health', async () => ({ ok: true, tcb: config.tcbBaseUrl }));
-app.get('/api/config', async () => ({
-  authRequired: Boolean(config.appPassword),
-  tcbBaseUrl: config.tcbBaseUrl,
-  checkPoints: ['Ginnery', 'Port'],
-}));
-
-await app.register(deviceRoutes);
-await app.register(jobRoutes);
-
-// Serve the built PWA if present; fall back to a friendly notice in dev.
 if (fs.existsSync(config.webDist)) {
   await app.register(fastifyStatic, { root: config.webDist, wildcard: false });
   app.setNotFoundHandler((req, reply) => {
