@@ -37,7 +37,13 @@ export default function Jobs({ onOpen }) {
             </button>
           </div>
         ))}
-        {!jobs.length && <p className="muted">No jobs yet. Scan or upload to create one.</p>}
+        {!jobs.length && (
+          <div className="empty">
+            <span className="empty-icon">📋</span>
+            <p>No jobs yet.</p>
+            <p className="muted">Upload a QR sheet to create your first job.</p>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
 import fastifyCookie from '@fastify/cookie';
 import { config } from './config.js';
-import { initDb } from './db.js';
+import { get } from './db.js';
 import deviceRoutes from './routes/devices.js';
 import jobRoutes from './routes/jobs.js';
 
@@ -16,7 +16,8 @@ import jobRoutes from './routes/jobs.js';
 export async function buildApp({ withDecode = true } = {}) {
   const app = Fastify({ logger: { level: 'info' }, bodyLimit: 30 * 1024 * 1024 });
 
-  await initDb();
+  // The database initialises lazily on first query (see db.js), so health/config
+  // still respond even if the DB is temporarily unreachable or misconfigured.
   await app.register(fastifyCookie);
   await app.register(multipart, { limits: { fileSize: 30 * 1024 * 1024, files: 20 } });
 
@@ -35,7 +36,16 @@ export async function buildApp({ withDecode = true } = {}) {
     });
   }
 
-  app.get('/api/health', async () => ({ ok: true, tcb: config.tcbBaseUrl }));
+  app.get('/api/health', async () => {
+    // Probe the database but never fail the health check — report its status inline.
+    let database = 'ok';
+    try {
+      await get('SELECT 1');
+    } catch (e) {
+      database = String(e?.message || e);
+    }
+    return { ok: true, tcb: config.tcbBaseUrl, database };
+  });
   app.get('/api/config', async () => ({
     authRequired: Boolean(config.appPassword),
     tcbBaseUrl: config.tcbBaseUrl,

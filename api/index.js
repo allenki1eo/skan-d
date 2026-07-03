@@ -46,7 +46,8 @@ export default async function handler(req, res) {
     }
     res.end(result.rawPayload);
   } catch (err) {
-    res.statusCode = 500;
+    console.error('[api] request failed:', err?.stack || err);
+    res.statusCode = err?.statusCode || 500;
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ error: String(err?.message || err) }));
   }

@@ -75,7 +75,11 @@ export default function Devices({ devices, onChange }) {
               onChange={(e) => setLink(e.target.value)}
               required
             />
-            <p className="hint">The service opens this link and registers itself as the scanning device.</p>
+            <p className="hint">
+              <strong>Recommended.</strong> Paste a fresh registration link and the service registers itself as
+              the scanning device — it captures the full session (including the secure <code>JSESSIONID</code>)
+              on the server, so auto-confirm works reliably.
+            </p>
           </>
         ) : (
           <>
@@ -88,8 +92,11 @@ export default function Devices({ devices, onChange }) {
               required
             />
             <p className="hint">
-              On the registered phone open the site, then in the browser console run{' '}
-              <code>document.cookie</code> and paste the result here.
+              You <strong>must include <code>JSESSIONID</code></strong> — it's the registered session.
+              It is <code>HttpOnly</code>, so <code>document.cookie</code> will <strong>not</strong> show it.
+              Get it from the phone's browser DevTools → Application → Cookies → ccis.tcb.go.tz, and paste as
+              <code>JSESSIONID=…; XSRF-TOKEN=…</code>. If confirms say “device has no check point”, the
+              JSESSIONID is missing or expired — use Register link instead.
             </p>
           </>
         )}
@@ -124,7 +131,13 @@ export default function Devices({ devices, onChange }) {
             </div>
           </div>
         ))}
-        {!devices.length && <p className="muted">No devices yet. Add one above.</p>}
+        {!devices.length && (
+          <div className="empty">
+            <span className="empty-icon">🔑</span>
+            <p>No devices yet.</p>
+            <p className="muted">Add one above to enable automatic confirmation.</p>
+          </div>
+        )}
       </div>
     </div>
   );

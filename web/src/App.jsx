@@ -83,9 +83,9 @@ export default function App() {
       <header className="topbar">
         <div className="brand">
           <span className="logo">🧵</span>
-          <div>
+          <div className="brand-text">
             <strong>Bale Track Auto</strong>
-            <small>{cfg?.tcbBaseUrl?.replace(/^https?:\/\//, '')}</small>
+            <small>{cfg?.tcbBaseUrl?.replace(/^https?:\/\//, '') || 'Tanzania Cotton Board'}</small>
           </div>
         </div>
         <DevicePicker devices={devices} deviceId={deviceId} setDeviceId={setDeviceId} />
