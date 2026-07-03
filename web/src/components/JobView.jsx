@@ -70,6 +70,7 @@ export default function JobView({ jobId, devices, deviceId, setDeviceId, onBack 
 
   const counts = job.bales.reduce((a, b) => ((a[b.status] = (a[b.status] || 0) + 1), a), {});
   const pct = progress && progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
+  const firstError = job.bales.find((b) => b.status === 'error' && b.error)?.error;
 
   return (
     <div className="page">
@@ -130,10 +131,19 @@ export default function JobView({ jobId, devices, deviceId, setDeviceId, onBack 
         <Chip label="error" n={counts.error} c="red" />
       </div>
 
+      {firstError && (
+        <div className="err-text" style={{ marginBottom: 12 }}>
+          <strong>Why confirms are failing:</strong> {firstError}
+        </div>
+      )}
+
       <div className="list">
         {job.bales.map((b) => (
           <div key={b.id} className="row">
-            <code className="ellipsis">{b.label || b.data.slice(0, 18) + '…'}</code>
+            <div style={{ minWidth: 0 }}>
+              <code className="ellipsis">{b.label || b.data.slice(0, 18) + '…'}</code>
+              {b.status === 'error' && b.error && <div className="row-error">{b.error}</div>}
+            </div>
             <span className={'badge ' + statusColor(b.status)}>{b.status}</span>
           </div>
         ))}
