@@ -8,6 +8,7 @@ export default function JobView({ jobId, devices, deviceId, setDeviceId, onBack 
   const [mode, setMode] = useState('confirm');
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(null);
+  const [deviceProblem, setDeviceProblem] = useState(null);
   const cancelRef = useRef(false);
 
   async function refresh() {
@@ -38,9 +39,15 @@ export default function JobView({ jobId, devices, deviceId, setDeviceId, onBack 
     if (!targets.length) return;
 
     cancelRef.current = false;
+    setDeviceProblem(null);
     setRunning(true);
     const counters = { done: 0, total: targets.length, confirmed: 0, already: 0, errors: 0 };
     setProgress({ ...counters });
+
+    // A device-level failure (not registered / not authorized) will hit every
+    // bale — detect it on the first one and stop instead of grinding through all.
+    const isDeviceProblem = (msg) =>
+      /check point|not registered|not authorized|re-register|re-import/i.test(msg || '');
 
     let index = 0;
     async function worker() {
@@ -51,7 +58,13 @@ export default function JobView({ jobId, devices, deviceId, setDeviceId, onBack 
           setBaleStatus(bale.id, r.status, r.message);
           if (r.status === 'confirmed') counters.confirmed++;
           else if (r.status === 'already') counters.already++;
-          else if (r.status === 'error') counters.errors++;
+          else if (r.status === 'error') {
+            counters.errors++;
+            if (isDeviceProblem(r.message)) {
+              setDeviceProblem(r.message);
+              cancelRef.current = true; // abort the whole run — the device is the problem
+            }
+          }
         } catch (err) {
           setBaleStatus(bale.id, 'error', err.message);
           counters.errors++;
@@ -131,10 +144,20 @@ export default function JobView({ jobId, devices, deviceId, setDeviceId, onBack 
         <Chip label="error" n={counts.error} c="red" />
       </div>
 
-      {firstError && (
+      {deviceProblem ? (
         <div className="err-text" style={{ marginBottom: 12 }}>
-          <strong>Why confirms are failing:</strong> {firstError}
+          <strong>Stopped — this device isn't a registered scanner.</strong> {deviceProblem}
+          <div style={{ marginTop: 6 }}>
+            Fix it in <strong>Devices → Register link</strong> with a fresh TCB link (recommended), or import
+            cookies that include <code>JSESSIONID</code>. Then run again.
+          </div>
         </div>
+      ) : (
+        firstError && (
+          <div className="err-text" style={{ marginBottom: 12 }}>
+            <strong>Why confirms are failing:</strong> {firstError}
+          </div>
+        )
       )}
 
       <div className="list">
