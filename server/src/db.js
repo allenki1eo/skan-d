@@ -56,27 +56,67 @@ const SCHEMA = [
   )`,
 ];
 
-export async function initDb() {
-  for (const sql of SCHEMA) {
-    await client.execute(sql);
+function dbHost() {
+  try {
+    return new URL(config.dbUrl.replace(/^libsql:/, 'https:')).host;
+  } catch {
+    return config.dbUrl.slice(0, 24);
+  }
+}
+
+// Turn a raw libSQL/connection error into an actionable message. A common cause
+// on a fresh deploy is a wrong or stale TURSO_DATABASE_URL / TURSO_AUTH_TOKEN.
+function dbError(e) {
+  const msg = String(e?.message || e);
+  const err = new Error(
+    `Database error (${dbHost()}): ${msg}. ` +
+      'Check that TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are set correctly ' +
+      '(regenerate the token with `turso db tokens create <db>` and re-copy the URL from ' +
+      '`turso db show <db> --url`), then redeploy.',
+  );
+  err.statusCode = 503;
+  return err;
+}
+
+// Create the schema once per warm instance. Cached; on failure it resets so the
+// next request retries (e.g. after fixing env vars + redeploying).
+let initPromise = null;
+export function initDb() {
+  if (!initPromise) {
+    initPromise = (async () => {
+      for (const sql of SCHEMA) await client.execute(sql);
+    })().catch((e) => {
+      initPromise = null;
+      console.error('[db] init failed:', String(e?.message || e));
+      throw dbError(e);
+    });
+  }
+  return initPromise;
+}
+
+async function exec(sql, args) {
+  await initDb();
+  try {
+    return await client.execute({ sql, args });
+  } catch (e) {
+    console.error('[db] query failed:', String(e?.message || e));
+    throw dbError(e);
   }
 }
 
 /** Return all matching rows as plain objects. */
 export async function all(sql, args = []) {
-  const res = await client.execute({ sql, args });
-  return res.rows;
+  return (await exec(sql, args)).rows;
 }
 
 /** Return the first matching row, or null. */
 export async function get(sql, args = []) {
-  const res = await client.execute({ sql, args });
-  return res.rows[0] ?? null;
+  return (await exec(sql, args)).rows[0] ?? null;
 }
 
 /** Execute a write; returns { rowsAffected, lastInsertRowid }. */
 export async function run(sql, args = []) {
-  const res = await client.execute({ sql, args });
+  const res = await exec(sql, args);
   return { rowsAffected: res.rowsAffected, lastInsertRowid: res.lastInsertRowid };
 }
 
